@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.*?>
+<?import javafx.scene.text.*?>
+<?import javafx.scene.paint.*?>
+<?import javafx.scene.effect.*?>
+<?import java.lang.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.layout.AnchorPane?>
+
+<AnchorPane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="1080.0" prefWidth="1920.0" xmlns="http://javafx.com/javafx/8" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.knoll.cztools.kiwi.view.UIController">
+   <children>
+      <VBox prefHeight="1080.0" prefWidth="1920.0" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
+         <children>
+            <ToolBar>
+               <items>
+                  <Label text="Kiwi" textFill="#d21ee3">
+                     <font>
+                        <Font name="Times New Roman Bold" size="36.0" />
+                     </font>
+                  </Label>
+                  <Label alignment="BASELINE_LEFT" text="Integrated Configurator Development Tool">
+                     <font>
+                        <Font name="Times New Roman Bold Italic" size="15.0" />
+                     </font>
+                     <textFill>
+                        <LinearGradient endX="0.3252427184466019" endY="1.0" startX="0.32524271844660196" startY="0.08252427184466027">
+                           <stops>
+                              <Stop color="BLACK" />
+                              <Stop color="#dbe31e" offset="1.0" />
+                           </stops>
+                        </LinearGradient>
+                     </textFill>
+                  </Label>                  
+               </items>
+            </ToolBar>
+            <SplitPane dividerPositions="0.10636079249217935" opacity="0.69">
+              <items>
+                  <Accordion fx:id="mainAccordion">
+                    <panes>
+                      <TitledPane text="Workbench">
+                        <content>
+                          <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="180.0" prefWidth="200.0">
+                                 <children>
+                                    <GridPane hgap="15.0" vgap="15.0" AnchorPane.leftAnchor="5.0" AnchorPane.topAnchor="10.0">
+                            
+                                            <columnConstraints>
+                  		                <ColumnConstraints minWidth="125.0" />
+                  		                <ColumnConstraints hgrow="NEVER" minWidth="10.0" />
+                                      </columnConstraints>
+                                      <rowConstraints>
+                                        <RowConstraints maxHeight="35.0" minHeight="10.0" prefHeight="25.0" vgrow="SOMETIMES" />  
+                  		                <RowConstraints fillHeight="false" maxHeight="35.0" minHeight="20.0" vgrow="SOMETIMES" />
+                  		                <RowConstraints fillHeight="false" maxHeight="35.0" prefHeight="25.0" vgrow="SOMETIMES" />
+                  		                <RowConstraints maxHeight="35.0" minHeight="10.0" prefHeight="25.0" vgrow="SOMETIMES" />
+                  		                <RowConstraints maxHeight="35.0" minHeight="10.0" prefHeight="25.0" vgrow="SOMETIMES" />
+										<RowConstraints maxHeight="35.0" minHeight="10.0" prefHeight="25.0" vgrow="SOMETIMES" />                  		                
+                                      </rowConstraints>
+                                       <children>
+                                          <Label text="Model Name:" GridPane.halignment="RIGHT" GridPane.rowIndex="0" />
+                                          <Label text="Tab:" GridPane.halignment="RIGHT" GridPane.rowIndex="3" />
+                                          <Label text="Source File:" wrapText="true" GridPane.halignment="RIGHT" GridPane.rowIndex="1" />
+                                          <HBox GridPane.columnIndex="1" GridPane.rowIndex="1">
+                                             <children>
+                                                <Label fx:id="srcFileLabel" maxWidth="200.0" textOverrun="CENTER_ELLIPSIS" wrapText="true" GridPane.columnIndex="1" GridPane.rowIndex="2" />
+                                                <Button fx:id="srcFileButton" mnemonicParsing="false" text="...">
+                                                   <font>
+                                                      <Font size="12.0" />
+                                                   </font>
+                                                </Button>
+                                             </children>
+                                          </HBox>
+                                          <Label text="Destination Folder:" textAlignment="RIGHT" wrapText="true" GridPane.halignment="CENTER" GridPane.rowIndex="2" />
+                                          <HBox GridPane.columnIndex="1" GridPane.rowIndex="2">
+                                             <children>
+                                                <Label fx:id="destFolderLabel" textOverrun="CENTER_ELLIPSIS" wrapText="true" GridPane.columnIndex="1" GridPane.rowIndex="3" />
+                                                <Button fx:id="destFolderButton" mnemonicParsing="false" text="...">
+                                                   <font>
+                                                      <Font size="12.0" />
+                                                   </font>
+                                                </Button>
+                                             </children>
+                                          </HBox>
+                                          <HBox fx:id="hbox" prefHeight="100.0" prefWidth="200.0" GridPane.columnIndex="1" GridPane.rowIndex="3">
+                                             <children>
+                                                <ChoiceBox fx:id="tabChoiceBox" prefWidth="250.0" />
+                                             </children>
+                                          </HBox>
+                                          <HBox prefHeight="100.0" prefWidth="200.0" GridPane.columnIndex="1" GridPane.rowIndex="4">
+                                             <children>
+                                                <ToggleButton fx:id="structureButton" disable="true" mnemonicParsing="false" text="Structure" />
+                                                <ToggleButton fx:id="rulesButton" disable="true" mnemonicParsing="false" text="  Rules  " />
+                                             </children>
+                                          </HBox>
+                                          <Label text="Tab Type:" GridPane.halignment="RIGHT" GridPane.rowIndex="4" />
+                                          <Label text="Actions:" GridPane.halignment="RIGHT" GridPane.rowIndex="5" />
+                                          <HBox prefHeight="100.0" prefWidth="200.0" GridPane.columnIndex="1" GridPane.rowIndex="5">
+                                             <children>
+                                                <ChoiceBox fx:id="actionsChoiceBox" prefWidth="150.0" />
+                                                <Button fx:id="actionsButton" mnemonicParsing="false" text="«" />
+                                             </children>
+                                          </HBox>
+                                          <TextField fx:id="modelNameTextInput" promptText="Foo(12 12345)" text="Foo(12 12345)" GridPane.columnIndex="1" />
+                                       </children>
+                                    </GridPane>
+                                 </children>
+                              </AnchorPane>
+                        </content>
+                      </TitledPane>
+                      <TitledPane fx:id="hierarchyTitledPane" expanded="false" text="Hierarchy">
+                        <content>
+                          <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="180.0" prefWidth="200.0">
+                                 <children>
+                                    <TreeView fx:id="treeView" prefHeight="962.0" prefWidth="380.0" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0" />
+                                 </children>
+                              </AnchorPane>
+                        </content>
+                      </TitledPane>
+                    </panes>
+                  </Accordion>
+                  <SplitPane dividerPositions="0.95" orientation="VERTICAL">
+                     <items>
+                      
+                                        <AnchorPane>
+                           <children>
+                              <TabPane fx:id="detailsTabPane" prefHeight="1024.0" prefWidth="1530.0" tabClosingPolicy="UNAVAILABLE">
+                                <tabs>
+                                  <Tab fx:id="structDetailsTab" text="Details">
+                                       <content>
+                                      <AnchorPane>
+                                             <children>
+                                                <Label text="Structure Details" />
+                                             </children>
+                                          </AnchorPane>
+                                       </content>
+                                  </Tab>
+                                    <Tab fx:id="ruleDetailsPane" text="Details">
+                                       <content>
+                                          <GridPane hgap="10.0">
+                                            <columnConstraints>
+                                              <ColumnConstraints halignment="RIGHT" hgrow="SOMETIMES" maxWidth="200.0" minWidth="10.0" prefWidth="200.0" />
+                                              <ColumnConstraints hgrow="SOMETIMES" minWidth="10.0" prefWidth="100.0" />
+                                            </columnConstraints>
+                                            <rowConstraints>
+                                              <RowConstraints maxHeight="150.0" minHeight="150.0" prefHeight="150.0" vgrow="SOMETIMES" />
+                                              <RowConstraints maxHeight="50.0" minHeight="10.0" prefHeight="30.0" vgrow="SOMETIMES" />
+                                              <RowConstraints maxHeight="50.0" minHeight="10.0" prefHeight="30.0" vgrow="SOMETIMES" />
+                                                <RowConstraints maxHeight="200.0" minHeight="10.0" prefHeight="30.0" vgrow="SOMETIMES" />
+                                                <RowConstraints maxHeight="50.0" minHeight="10.0" prefHeight="30.0" vgrow="SOMETIMES" />
+                                            </rowConstraints>
+                                             <children>
+                                                <Label text="Rule Name" GridPane.rowIndex="1">
+                                                   <font>
+                                                      <Font name="System Bold" size="15.0" />
+                                                   </font>
+                                                </Label>
+                                                <Label text="Rule Description" GridPane.rowIndex="2">
+                                                   <font>
+                                                      <Font name="System Bold" size="15.0" />
+                                                   </font>
+                                                </Label>
+                                                <TextField fx:id="ruleName" editable="false" maxWidth="500.0" prefWidth="100.0" GridPane.columnIndex="1" GridPane.rowIndex="1" />
+                                                <TextField editable="false" maxWidth="500.0" prefWidth="100.0" GridPane.columnIndex="1" GridPane.rowIndex="2" />
+                                                <Label text="Rule Text" GridPane.rowIndex="3">
+                                                   <font>
+                                                      <Font name="System Bold" size="15.0" />
+                                                   </font>
+                                                </Label>
+                                                <TextArea fx:id="ruleTextTextArea" maxWidth="1000.0" prefHeight="200.0" prefWidth="200.0" wrapText="true" GridPane.columnIndex="1" GridPane.rowIndex="3" />
+                                                <Button fx:id="validateRuleTextBtn" mnemonicParsing="false" text="Validate" GridPane.columnIndex="1" GridPane.halignment="RIGHT" GridPane.rowIndex="4">
+                                                   <GridPane.margin>
+                                                      <Insets right="320.0" />
+                                                   </GridPane.margin>
+                                                </Button>
+                                             </children>
+                                          </GridPane>
+                                       </content>
+                                    </Tab>
+                                </tabs>
+                              </TabPane>
+                           </children>
+                        </AnchorPane>
+                        <AnchorPane prefHeight="200.0" prefWidth="200.0">
+                           <children>
+                              <TextArea fx:id="logTextArea" editable="false" maxHeight="200.0" minHeight="200.0" prefHeight="200.0" prefWidth="1530.0" wrapText="true" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0" />
+                           </children>
+                        </AnchorPane>
+                     </items>
+                  </SplitPane>
+              </items>
+            </SplitPane>
+         </children>
+      </VBox>
+   </children>
+</AnchorPane>

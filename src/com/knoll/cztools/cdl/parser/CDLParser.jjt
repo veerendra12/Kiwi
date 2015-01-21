@@ -1,0 +1,1169 @@
+/*===========================================================================+
+ |      Copyright (c) 2003 Oracle Corporation, Redwood Shores, CA, USA       |
+ |                         All rights reserved.                              |
+ +===========================================================================+
+ |  FILENAME                                                                 |
+ |      CDLParser.jjt                                                        |
+ |  DESCRIPTION                                                              |
+ |      The grammar and lexical structure specification for generating       |
+ |      the lexer, parser, and AST generator for CDL using JavaCC            |
+ |  NOTES                                                                    |
+ |                                                                           |
+ |  DEPENDENCIES                                                             |
+ |  HISTORY                                                                  |
+ |       27-FEB-03  B Ross  Created.                                         |
+ +===========================================================================*/
+options {
+  /* JavaCC Options */
+  LOOKAHEAD = 1;
+  CHOICE_AMBIGUITY_CHECK = 2;
+  OTHER_AMBIGUITY_CHECK = 1;
+  STATIC = false;
+  DEBUG_PARSER = false;
+  DEBUG_LOOKAHEAD = false;
+  DEBUG_TOKEN_MANAGER = false;
+  ERROR_REPORTING = true;
+  JAVA_UNICODE_ESCAPE = true;
+  UNICODE_INPUT = true;
+  IGNORE_CASE = true;
+  USER_TOKEN_MANAGER = false;
+  USER_CHAR_STREAM = false;
+  BUILD_PARSER = true;
+  BUILD_TOKEN_MANAGER = true;
+  SANITY_CHECK = true;
+  FORCE_LA_CHECK = false;
+
+  /* JJTree options */
+  // Don't use different AST nodes
+  MULTI=false;
+  // Use AST nodes only when specified
+  NODE_DEFAULT_VOID=true;
+  // Use factory to construct AST nodes
+  NODE_FACTORY=true;
+  // The node factory should use a reference to the parser
+  NODE_USES_PARSER=true;
+  // Calls to user-defined methods on entry and exit of every node scope
+  NODE_SCOPE_HOOK=true;
+  // We've already generated the visitor methods and we don't want to overwrite our changes
+  VISITOR=false;
+  // Optimize the token manager
+  OPTIMIZE_TOKEN_MANAGER=true;
+  //set the parser package
+  NODE_PACKAGE = "com.knoll.cztools.cdl.parser";
+}
+
+PARSER_BEGIN(CDLParser)
+
+package com.knoll.cztools.cdl.parser;
+
+import com.sun.java.util.collections.ArrayList;
+import com.sun.java.util.collections.Iterator;
+import com.sun.java.util.collections.LinkedList;
+import com.sun.java.util.collections.List;
+
+import java.io.CharArrayReader;
+import java.io.InputStream;
+import java.io.Reader;
+
+import java.util.Stack;
+
+public class CDLParser {
+
+  //this code is currently not thread-safe  
+  private LinkedList m_roots;
+  private int m_globalSequence;
+
+  /* parse types */
+  private static final int STATEMENTS = 0;
+  private static final int EXPRESSION = 1;
+  public static boolean DEBUG_MODE = false;
+  public static final String CDL_DEBUG =  "cz.cdl_debug"; 
+  
+  static {
+    String value =  System.getProperty(CDL_DEBUG);
+    DEBUG_MODE = value != null ? value.equalsIgnoreCase("true") : false;
+  }
+
+  public CDLParser()
+  {
+    //just feed it an empty stream
+    this(new CharArrayReader(new char[] {}));
+    m_roots = new LinkedList();
+    m_globalSequence = 0;
+  }
+
+  public int getNextSequence()
+  {
+    return ++m_globalSequence;
+  }
+  
+  /**
+  * This is the public method for rule creation
+  * Pass a stream representing CDL text and 
+  * the expression tree will be created in memory
+  */
+  public ParseResult parseStatements(InputStream stream) throws ParseException
+  {
+    ReInit(stream);
+    return parseInternal(STATEMENTS, true);
+  }
+
+  /**
+  * This is the public method for rule creation
+  * Pass a Reader representing CDL text and 
+  * the expression tree will be created in memory
+  * If the writeToDb argument is true and the statements parse correctly,
+  * they will be written to the cz_expression_nodes table
+  */
+  public ParseResult parseStatements(Reader reader, boolean writeToDb) throws ParseException
+  {
+    ReInit(reader);
+    return parseInternal(STATEMENTS, writeToDb);
+  }
+
+  /**
+  * This is the public method for creating single 
+  * expressions, such as to pass as an argument to
+  * a functional companion.
+  * Pass a stream representing CDL text and
+  * the expression tree will be created in memory
+  * If the writeToDb argument is true and the statements parse correctly,
+  * they will be written to the cz_expression_nodes table
+  */
+  public ParseResult parseExpression(Reader reader, boolean writeToDb) throws ParseException
+  {
+    ReInit(reader);
+    return parseInternal(EXPRESSION, writeToDb);
+  }
+
+  /**
+  * This actually starts the parsing, using the appropriate entry point
+  * for the grammar
+  */
+  private ParseResult parseInternal(int parseType, boolean writeToDb) throws ParseException
+  {
+    m_roots.clear();
+    m_globalSequence = 0;
+    // getModelAdapter().clearRecords(); //get rid of the current rule
+    try{
+      switch(parseType){
+        case STATEMENTS:
+          Statements();
+          break;
+        case EXPRESSION:
+          Expression();
+          break;
+      }
+      checkTypes(parseType==STATEMENTS);
+    }catch(ParseException pe){
+      //make sure it has the adapter for message translating
+      // pe.setModelAdapter(getModelAdapter()); 
+      throw pe;
+    }catch(TokenMgrError tme){
+      //if this is anything other than a lexical error, it is a fatal error not meant
+      //for the user
+      if(!tme.isLexicalError()){
+        throw new RuntimeException(tme.getMessage());
+      }
+      //make sure it has the adapter for message translating
+      // tme.setModelAdapter(getModelAdapter()); 
+      throw tme;
+    }
+    if(writeToDb) {
+      for(Iterator iter=m_roots.iterator(); iter.hasNext();) {
+        ExprNode node = (ExprNode)iter.next();
+        if(node.getExprType() ==  ExprNode.EXPR_CALL ||
+           node.getExprType() == CDLParserTreeConstants.JJTEXPR_CALL) {
+          // getModelAdapter().setEventBindingValues(node);
+          break;
+        } else {
+          node.write();
+        }
+      }
+    }
+    return createResult();
+  }
+  
+  private ParseResult createResult() {
+    ParseResult pr = new ParseResult();
+    /*    
+    // Go over the roots and see if we have an Accumulator type template
+    List roots = getRoots();
+    for(Iterator iterator = roots.iterator();iterator.hasNext();) {
+      ExprNode root = (ExprNode) iterator.next();
+      int type = root.getExprType();
+      if( type == ExprNode.EXPR_COMPATIBLE ) {
+        pr.setIsCompatibilityStatement(true);
+      }
+      else {
+        if(type == ExprNode.EXPR_FOR_ALL || type == ExprNode.EXPR_FOR_DISTINCT ) {
+          root = (ExprNode)root.jjtGetChild(root.jjtGetNumChildren()-1);
+        }
+        Integer templateId = root.getTemplateId();
+        if(templateId != null) {
+          Template template = m_modelAdapter.getTemplate(templateId);
+          if( template != null && template.isSearchOrDefaultOnlyTemplate()) {
+            pr.setIsDefaultOrSearchOnlyStatement(true);
+            pr.setDefaultOrSearchOperator(template.getName().toUpperCase());
+          }
+          if(template != null && template.isAccumulatorType()) {
+            pr.setIsAccumulatorStatement(true);
+          }
+        }
+      }
+    }
+    */
+    return pr;
+  }
+
+  public void commit(){
+    // getModelAdapter().commit();
+  }
+
+  private List getRoots()
+  {
+    if(m_roots.isEmpty()) {
+      while (jjtree.nodeArity() > 0) {
+        m_roots.addFirst(jjtree.popNode());
+      }
+    }
+    return m_roots;
+  }
+
+  /**
+  * This method handles type checking and other symatnic analysis
+  */
+  private void checkTypes(boolean isStatement) throws ParseException
+  {
+    /*
+    for(Iterator iter = getRoots().iterator(); iter.hasNext();){
+      ExprNode node = (ExprNode)iter.next();
+      TypeCheckingVisitor visitor = new TypeCheckingVisitor(getModelAdapter());
+      List tables = new ArrayList();
+      tables.add(new SymbolTable()); //type table
+      tables.add(new SymbolTable()); //mutable table
+      node.jjtAccept(visitor, tables);
+      if(isStatement) checkRootIsStatement(node);
+      if(isStatement) validateRuleType(node);
+    }
+    */
+  }
+  /**
+    Last node of refer (Reference()) must be a sysProp with a CollectionFlag
+    or TemplateApp must return Collection Flag
+  */
+  void validateCollection(ExprNode refer, ExprNode exprNode, boolean isTempAppl) throws ParseException {
+    try {
+      if(isTempAppl) {
+        if("1".equals(exprNode.getReturnsCollection())) {
+          throw new ParseException("TemplateAppliction does not have Collection Flag", refer);
+        }
+        return;
+      }
+     int exprType = exprNode.getExprType();
+     /**
+      For EXPR_SYS_PROP try to do an early TypeChecking and propagate the collectionFlag
+      to the Reference node. This will make the code simpler since we have
+      to look for just CollectionFlag on the Reference
+     */
+     if(exprType == ExprNode.EXPR_SYS_PROP) {
+       String propertyName = exprNode.getName();
+       Template template =  getModelAdapter().getSystemProperty(propertyName,null );
+       boolean isCollection = template.getReturnsCollection();
+       if(!isCollection || exprNode.jjtGetNumChildren() >0 ) throw new ParseException("invalid usage-- not allowed", refer);
+       exprNode.setReturnsCollection(isCollection);
+     } else if(exprNode.jjtGetNumChildren() == 1) {
+       for(int i=0; i<exprNode.jjtGetNumChildren(); i++){
+         ExprNode childNode = (ExprNode)exprNode.jjtGetChild(i);
+         validateCollection(refer,childNode,isTempAppl );
+       }
+     } else {
+        MessageToken mt = new MessageToken("REFERENCE", "INVALID:-------");
+        String mess ="Collection property not found. ";
+        throw new ParseException(mess, refer);
+     }
+   } catch(InvalidReferenceException ire) {
+     MessageToken mt = new MessageToken("REFERENCE", ire.getPathString());
+     String mess = getModelAdapter().translateMessage("CZ", ire.getMessageName(), new MessageToken[]{mt});
+     ire.setErrorCause(mess);
+     ire.setSourceInfo(exprNode);
+     throw ire;
+   }
+ }       
+  public void printTree() throws ParseException
+  {
+    //CZUtilities.dumpMessage("---------------\nExpression Tree\n---------------");
+    if(m_roots == null) return;
+
+    ASTPrintVisitor visitor = new ASTPrintVisitor();
+    for(Iterator iter = m_roots.iterator(); iter.hasNext();) {
+      ExprNode root = (ExprNode)iter.next();
+      root.jjtAccept(visitor, "  ");
+      //CZUtilities.dumpMessage("");
+      root.dump(" ");
+    }
+  }
+
+  class ASTPrintVisitor implements CDLParserVisitor
+  {
+    public Object visit(SimpleNode node, Object data) throws ParseException{
+      ExprNode exprNode = (ExprNode) node;
+      //CZUtilities.dumpMessage(data + (exprNode.isRoot() ? "" : " |_ ") + node);
+      data = node.childrenAccept(this, data + (exprNode.isRoot() ?
+                                               "" :
+                                               (exprNode.isLastChild() ?
+                                                "    " :
+                                                " |  ")));
+      return data;
+    }
+  }
+
+  void jjtreeOpenNodeScope(Node node) {
+  }
+
+  void jjtreeCloseNodeScope(Node node) throws ParseException {
+    //if the node is of type ref_node, we will look up the ps_node id
+    //and explosion node id and then shrink the tree
+    ExprNode exprNode = (ExprNode)node;
+    switch(exprNode.getExprType()) {
+      case ExprNode.EXPR_REFNODE:
+        //build name path
+        ArrayList path = new ArrayList();
+        for(int i=0; i<exprNode.jjtGetNumChildren(); i++){
+          ExprNode childNode = (ExprNode)exprNode.jjtGetChild(i);
+          if(childNode.getASTType() != CDLParserTreeConstants.JJTEXPR_PSNODE) break;
+          path.add(childNode.getName());
+        }
+
+        if(!path.isEmpty()){
+        /*
+          //this reference begins with a node reference
+          //lookup the node in the db
+          // ids = lookupNodeIds(path.toArray(), exprNode);
+
+          //set the values of the ps node on the ref node
+          String resolvedPath  = ids.getModelPath();
+          if(resolvedPath == null) {
+            exprNode.setPsNodeId(ids.getPsNodeId() );
+            exprNode.setExplosionId( ids.getModelExplId() );
+          } else { // need special processing
+            exprNode.setRelativeNodePath(resolvedPath);
+            exprNode.setPsNodeId( ids.getPathHeadPsNodeId() );
+            exprNode.setExplosionId( ids.getPathHeadModelExplId() );
+          }
+          exprNode.setDataType( ids.getDetailedNodeType() );
+          //set the display depth of the reference
+          exprNode.setDisplayNodeDepth(path.size());
+          exprNode.setName(pathToName(path));
+          exprNode.setMutableFlag(true);
+
+          //now that we've resolved the node, let's remove all the psnode AST nodes
+          //first let's record the buffer positions
+          ExprNode childNode = (ExprNode)exprNode.jjtGetChild(path.size()-1);
+          int startPos = ((ExprNode)exprNode.jjtGetChild(0)).getSourceOffset();
+          int endPos = childNode.getSourceOffset() + childNode.getSourceLength();
+          exprNode.setSourcePosition(startPos, endPos-startPos);
+          //now delete the ps node children
+          exprNode.jjtRemoveFirstChildren(path.size());
+          //finally, set the type of the ref node to ps node
+          if(resolvedPath == null) {
+            exprNode.setAstType(CDLParserTreeConstants.JJTEXPR_PSNODE);
+          } else {
+            exprNode.setExprType(ExprNode.EXPR_PS_NODE_BY_NAME);
+          }
+        */  
+        } else {
+          //this reference begins with an argument reference
+          //lets transfer the arg value to the ref node
+          ExprNode firstChild = (ExprNode)exprNode.jjtGetChild(0);
+          exprNode.setArgument(firstChild.getArgumentName());
+          //now delete the arg child
+          exprNode.jjtRemoveFirstChildren(1);
+          //finally, set the type of the ref node to argument
+          exprNode.setAstType(CDLParserTreeConstants.JJTEXPR_ARGUMENT);
+        }
+        break;
+      case ExprNode.EXPR_COMPATIBLE:
+        checkAndModifyCompatible(exprNode);
+        break;
+    } 
+    
+    //set the sequence number on all the children
+    for(int i=0; i<exprNode.jjtGetNumChildren(); i++){
+      ExprNode childNode = (ExprNode)exprNode.jjtGetChild(i);
+      childNode.setChildSequenceNumber(i+1);
+    }
+    //if this node has no child sequence, it must be a root, so set its seq to 1
+    if(exprNode.getChildSequenceNumber() == null) exprNode.setChildSequenceNumber(1);
+  }
+
+  /**
+  * lookup ps node ids and explosion ids of node with given path
+  */
+  /*
+  ModelNodeReferences lookupNodeIds(Object path[], ExprNode node) throws ParseException
+  {
+    try{
+      return getModelAdapter().lookupModelReferences(path);
+    } catch(InvalidReferenceException ire){
+      MessageToken mt = new MessageToken("REFERENCE", ire.getPathString());
+      String mess = getModelAdapter().translateMessage("CZ", ire.getMessageName(), new MessageToken[]{mt});
+      ire.setErrorCause(mess);
+      ire.setSourceInfo(node);
+      throw ire;
+    }
+  }
+  */
+
+  private String pathToName(List path)
+  {
+    StringBuffer buf = new StringBuffer();
+    for(Iterator iter = path.iterator(); iter.hasNext();){
+      buf.append((String)iter.next());
+      if(iter.hasNext()) buf.append(".");
+    }
+    return buf.toString();
+  }
+
+  /**
+  * build a chain of the last n elements in the stack so 
+  * that we will assign them the same param index if they are used 
+  * as an argument to a template
+  * i.e. foo(1, {2, 3});
+  * this will parse as:
+  *    foo
+  *     |__1
+  *     |__2
+  *     |__3
+  * but 2 and 3 will get the same index number, so we will know the difference
+  */
+  void chainElements(int numElements)
+  {
+    //put the nodes in a temporary stack
+    Stack elements = new Stack();
+    while (numElements-- > 0) {
+      elements.push(jjtree.popNode());
+    }
+    
+    //chain the nodes and put them back on the real stack
+    ExprNode prevNode = null;
+    while (!elements.empty()) {
+      ExprNode node = (ExprNode) elements.pop();
+      if(prevNode != null) node.setPrevNode(prevNode);
+      prevNode = node;
+      jjtree.pushNode(node);
+    }
+  }
+
+  /**
+   * for each reference after the "OF" in a compatible, we need to check that
+   * it is an option feature or option class and then ti add 
+   * a .children() to the end of it
+   */
+  private void checkAndModifyCompatible(ExprNode compatNode) throws ParseException{
+    for(int i=0; i<compatNode.jjtGetNumChildren(); i++) {
+      ExprNode iterNode = (ExprNode)compatNode.jjtGetChild(i);
+      if(iterNode.getASTType() == CDLParserTreeConstants.JJTEXPR_ITERATOR) {
+        ExprNode psNode = (ExprNode)iterNode.jjtGetChild(0);
+        if(psNode.jjtGetNumChildren() > 0 
+        // ||  !getModelAdapter().isConvertible(550, psNode.getDataType().intValue())
+        ) {
+          String mess = "CZ_CDL_COMPAT_NEEDS_FEAT";
+          throw new ParseException(mess, psNode);
+        }
+        ExprNode newChild = (ExprNode)psNode.jjtCreate(this, CDLParserTreeConstants.JJTEXPR_SYS_PROP);
+        newChild.setName("options");
+        newChild.setChildSequenceNumber(1);
+        newChild.jjtSetParent(psNode);
+        psNode.jjtAddChild(newChild, 0);
+      }
+    }
+  }
+
+  /**
+  * Validate that CALL statements exists only for Cxs (rule_type=300)
+  * and other statements exist only for non-cx rules (rule_type =200)
+  */
+  void validateRuleType(ExprNode root) throws ParseException
+  {
+    if(root.isCXRule()) {
+      if(root.getExprType() == CDLParserTreeConstants.JJTEXPR_CALL ||
+         root.getExprType() == ExprNode.EXPR_CALL ) {
+        return;
+      }
+    } else if(root.getExprType() != CDLParserTreeConstants.JJTEXPR_CALL) {
+      return;
+    }
+    String mess = "CZ_CDL_NO_TOP_LEVEL_TEMPLATE";
+    throw new ParseException(mess, root);
+  }
+  
+  /**
+  * If we are evaluating a statement, there must be a valid top-level template at
+  * the root
+  */
+  void checkRootIsStatement(ExprNode root) throws ParseException
+  {
+    int type = root.getExprType();
+    if(type == ExprNode.EXPR_COMPATIBLE) return;
+    if(type == CDLParserTreeConstants.JJTEXPR_CALL) return;
+    if(type == ExprNode.EXPR_CALL ) return;
+    if(type == ExprNode.EXPR_FOR_ALL || type == ExprNode.EXPR_FOR_DISTINCT ) {
+      root = (ExprNode)root.jjtGetChild(root.jjtGetNumChildren()-1);
+    }
+    /*
+    Integer templateId = root.getTemplateId();
+    if(templateId != null) {
+      Template template = m_modelAdapter.getTemplate(templateId);
+      if(template != null && template.isTopLevelTemplate()) return;
+    }
+    */
+    String mess = "CZ_CDL_NO_TOP_LEVEL_TEMPLATE";
+    throw new ParseException(mess, root);
+  }
+
+    /*given a string treat "\" as an escape character
+   returned value is string value without escape 
+   character \ except of course \\ -> \
+  */
+  private String processEscapeChar(String node) {
+    if(node.indexOf("\\") == -1 ) return node;
+    StringBuffer newNode = new StringBuffer();
+    boolean skipNext = false;
+    for(int j = 0; j < node.length(); j++ ) {
+      char c = node.charAt(j);
+      if(c != '\\') {
+        newNode.append( c);
+      } else {
+        //character is backslash so include it only if previous char is backslash
+        if( j != 0) {
+          char p = node.charAt(j -1);
+          if(p == '\\'  && !skipNext) {
+            newNode.append( c);
+            skipNext = true;
+          } else {
+            skipNext = false;
+          }
+        } else {skipNext = false;}
+      }
+    }
+    return newNode.toString();
+  }
+}
+
+PARSER_END(CDLParser)
+
+SPECIAL_TOKEN : /* whitespace */
+{ 
+  < WHITESPACE: ( " " | "\t" | "\f" | <LINE_BREAK> )+ >
+| < LINE_BREAK: "\n" | "\r" | "\r\n" >
+}
+
+MORE : /* comments */
+{
+  "//" : IN_SINGLE_LINE_COMMENT
+| "--" : IN_SINGLE_LINE_COMMENT
+| "/*" : IN_MULTI_LINE_COMMENT
+}
+<IN_SINGLE_LINE_COMMENT>
+SPECIAL_TOKEN :
+{
+  <SINGLE_LINE_COMMENT: "\n" | "\r" | "\r\n" > : DEFAULT
+}
+<IN_MULTI_LINE_COMMENT>
+SPECIAL_TOKEN :
+{
+  <MULTI_LINE_COMMENT: "*/" > : DEFAULT
+}
+<IN_SINGLE_LINE_COMMENT,IN_MULTI_LINE_COMMENT>
+MORE :
+{
+  < ~[] >
+}
+
+TOKEN : /* literals */
+{ < END: "\\0" >
+| < #DIGITS: ( <DIGIT> )+ >
+| < #DIGIT: "0" | <NONZERO_DIGIT> >
+| < #NONZERO_DIGIT: ["1"-"9"] >
+| < TEXT_LITERAL: "\"" ( ~["\"","\\","\n","\r"] 
+                       | "\\" ["n","t","b","r","f","\\","\""] 
+                       )* "\"" >
+| < INTEGER_LITERAL: "0" | <NONZERO_DIGIT> ( <DIGIT> )* >
+| < DECIMAL_LITERAL: ( <INTEGER_LITERAL> "." ( <DIGITS> )? ( <EXPONENTIAL> )?
+                     | <INTEGER_LITERAL> <EXPONENTIAL>
+                     | "." <DIGITS> ( <EXPONENTIAL> )?
+                     | "PI"
+                     | "E"
+                     ) >
+| < #EXPONENTIAL: "E" ( <PLUS> | <MINUS> )? <INTEGER_LITERAL> >
+| < BOOLEAN_LITERAL: "TRUE" | "FALSE" >
+}
+
+TOKEN : /* operators */
+{
+  < PLUS: "+" >
+| < MINUS: "-" >
+| < MULTIPLY: "*" >
+| < DIVIDE: "/" >
+| < ZDIV: "ZDIV" >
+| < MOD: "%" >
+| < EXP: "^" >
+| < EQUALS: "=" >
+| < NOT_EQUALS: "<>" >
+| < GT: ">" >
+| < GE: ">=" >
+| < LT: "<" >
+| < LE: "<=" >
+| < NOT: "NOT" >
+| < NOTTRUE: "NOTTRUE" >
+| < AND: "AND" >
+| < OR:  "OR" >
+| < LIKE: "LIKE" >
+| < SUBSETOF: "SUBSETOF" >
+}
+
+TOKEN : /* keywords */
+{
+  < CONSTRAIN: "CONSTRAIN" >
+| < ADD      : "ADD" >
+| <SUBTRACT  : "SUBTRACT">
+| < CONTRIBUTE: "CONTRIBUTE" >
+| < COMPATIBLE: "COMPATIBLE" > 
+|  < CALL: "CALL" >
+| < OF: "OF" >
+| < FORALL: "FOR ALL" >
+| < IN: "IN">
+| < WHERE: "WHERE" >
+| < COLLECT: "COLLECT" >
+| < DISTINCT: "DISTINCT" > 
+| < WHEN: "WHEN" >
+| < WITH: "WITH" >
+| < TO: "TO" >
+| <FROM: "FROM">
+| < REQUIRES: "REQUIRES" >
+| < IMPLIES: "IMPLIES" >
+| < EXCLUDES: "EXCLUDES" >
+| < NEGATES: "NEGATES" >
+| < DEFAULTS: "DEFAULTS" >
+| < FUNC_PTR: "@" >
+}
+
+TOKEN : /* separators */
+{
+  < DOT: "." >
+| < COMMA: "," >
+| < SEMICOLON: ";" >
+| < LPAREN: "(" >
+| < RPAREN: ")" >
+| < LBRACKET: "{" >
+| < RBRACKET: "}" >
+}
+
+
+
+TOKEN : /* identifiers */
+{
+  < USER_PROP_IDENTIFIER: "property" >
+| < SYSTEM_PARAMETER: "SYSTEM_PARAMETER" >
+| < EVENT_PARAMETER: "EVENT_PARAMETER" >
+| < SIMPLE_IDENTIFIER: (<LETTER> | <DIGIT> )  ( <LETTER_OR_DIGIT> )* >
+| < FORMAL_IDENTIFIER: "&" <LETTER> ( <LETTER_OR_DIGIT> )* >
+| < QUOTED_IDENTIFIER: "'" ( ~["\'"] | "\\'")* "'" > 
+| < #LETTER: ["\u0024", "\u0041"-"\u005a", "\u005f", "\u0061"-"\u007a",
+              "\u00c0"-"\u00d6", "\u00d8"-"\u00f6", "\u00f8"-"\u00ff",
+              "\u0100"-"\u1fff", "\u3040"-"\u318f", "\u3300"-"\u337f",
+              "\u3400"-"\u3d2d", "\u4e00"-"\u9fff", "\uf900"-"\ufaff",
+              "\u003f",  "\u0021", "\u0023", "\u0024"] >
+| < #LETTER_OR_DIGIT: <LETTER> | <DIGIT> | ( "\\" ( "\"" | "\'" | "\\" ) | "\'" ) >
+}
+
+/* Main Grammar Productions */
+
+void Statements() :
+{}
+{
+  ( [ Statement() ] ) ( ";" [ Statement() ] )* ( <END> | <EOF> )
+}
+
+void Statement() :
+{}
+{
+  ( Constraint()
+        | Contribute()   
+  | Compatible()
+  | Call()
+  | Add()
+  | Subtract()
+  )
+}
+
+void Constraint() :
+{}
+{
+  [ <CONSTRAIN> ] ConstrainingExpression()
+}
+
+void ConstrainingExpression() :
+{}
+{     
+        (                               /* if there is no constraining op, this must be a top-level template appl */
+    Expression() 
+    ( ( ConstrainingOperator()              {((ExprNode) jjtThis).setName(getToken(0).image);}
+        Expression()
+      )                                     #EXPR_OPERATOR(2)
+    )?
+    [ ForAll() ]
+  )                                          
+}
+
+void ConstrainingOperator() :
+{}
+{
+  ( <REQUIRES>
+        | <IMPLIES>
+        | <EXCLUDES>
+        | <NEGATES>
+        | <DEFAULTS>
+  )
+}
+
+void Contribute() :
+{}
+{
+  ( 
+    <CONTRIBUTE>                         {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                         {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+    Expression() 
+    <TO> Reference() 
+  )                                         #EXPR_OPERATOR(true)
+  [ ForAll() ]   
+}
+
+void Subtract() :
+{}
+{
+  ( 
+    <SUBTRACT>                         {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                         {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+    Expression() 
+    <FROM> Reference() 
+  )                                         #EXPR_OPERATOR(true)
+  [ ForAll() ]   
+}
+
+
+
+void Add() :
+{}
+{
+  ( 
+    <ADD>                                {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                         {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+    Expression() 
+    <TO> Reference() 
+  )                                         #EXPR_OPERATOR(true)
+  [ ForAll() ]   
+}
+
+void Compatible() :
+{}
+{
+  (
+    <COMPATIBLE>
+    ( <FORMAL_IDENTIFIER>         {((ExprNode)jjtThis).setArgument(getToken(0).image);}
+      <OF> Reference()
+    )                                       #EXPR_ITERATOR(true)
+    ( ( "," <FORMAL_IDENTIFIER>     {((ExprNode)jjtThis).setArgument(getToken(0).image);}
+        <OF> Reference()
+      )                                     #EXPR_ITERATOR(true)
+    )+
+    Where()
+  )                                         #EXPR_COMPATIBLE(true)
+}
+
+void Call():
+{}
+{
+  (  <CALL>  {((ExprNode) jjtThis).setName(getToken(0).image);}
+             {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+      Method() <WHEN> Event() (<IN> EventScope())?) #EXPR_CALL(true)
+}
+
+void Method():
+{}
+{
+  (<SIMPLE_IDENTIFIER> {((ExprNode) jjtThis).setName(getToken(0).image);}
+                       {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+    Arguments()
+  ) #EXPR_METHOD(true)
+}
+
+void Event():
+{}
+{
+  (<SIMPLE_IDENTIFIER> {((ExprNode) jjtThis).setName(getToken(0).image);}
+                       {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+  (":"<TEXT_LITERAL>  {((ExprNode) jjtThis).setCommandName(getToken(0).image);}
+                      {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+                      #EXPR_LITERAL(true) )?
+  ) #EXPR_EVENT(true)
+}
+
+void EventScope():
+{}
+{
+  (<SIMPLE_IDENTIFIER> {((ExprNode) jjtThis).setName(getToken(0).image);}
+                       {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+  )  #EXPR_EVENTSCOPE(true)
+}
+
+void SystemArgument():
+{}
+{
+  <SYSTEM_PARAMETER>("("<TEXT_LITERAL>  {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                        {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+                                        #EXPR_LITERAL(true) ")" )
+  #EXPR_SYSTEMARGUMENT(true)
+}
+
+void EventArgument():
+{}
+{
+  <EVENT_PARAMETER>("("<TEXT_LITERAL>  {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                        {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+                                        #EXPR_LITERAL(true) ")" )
+  #EXPR_EVENTARGUMENT(true)
+}
+
+/* Iterators */
+
+void ForAll() :
+{}                                  /* Since the language is expressed as:
+                                       Stmt FOR ALL Iterator WHERE Condition,
+                                       but we want to parse it as if it were:
+                                       FOR ALL Iterator WHERE Condition Stmt,
+                                       we have to alter the stack a bit */
+{                                   {Node node = jjtree.popNode();} /*this is the OPERATOR */
+  (                                 
+    <FORALL> 
+    Iterator() ( LOOKAHEAD(2) "," Iterator() )* 
+    [ Where() ]                     /* we are putting it back on the stack a s child of the FOR ALL */
+                                    {jjtree.pushNode(node);} 
+                                    {/*this is an empty action placed here so that the 
+                                       previous action will be in the correct scope */}
+  )                                        #EXPR_FOR_ALL(true)
+                                     
+}
+
+void Where() :
+{}
+{
+  ( <WHERE> Expression() )                #EXPR_WHERE(true)     
+}
+
+void Iterator() :
+{}
+{
+  (
+    <FORMAL_IDENTIFIER>             {((ExprNode) jjtThis).setArgument(getToken(0).image);}
+    <IN> 
+    ( LOOKAHEAD(2) CollectionExpression() 
+    | CollectionLiteral() 
+    | LOOKAHEAD(2) TemplateApplication() {validateCollection((ExprNode) jjtThis, (ExprNode) jjtThis, true);}
+    | Reference() {validateCollection((ExprNode) jjtThis, (ExprNode) jjtThis, false);}
+    )
+  )                                       #EXPR_ITERATOR(true)
+}
+
+/* Expressions */
+
+void Expression() :
+{}
+{
+        OrExpression()
+}
+
+void OrExpression() :
+{
+  String op = null;
+}
+{
+        ( AndExpression() 
+    ( <OR>                              {op = getToken(0).image; ((ExprNode) jjtThis).setName(op);}
+      OrExpression() 
+    )? 
+  )                                        #EXPR_OPERATOR(op != null)
+}
+
+void AndExpression() :
+{
+  String op = null;
+}
+{
+  ( EqualityExpression() 
+    ( <AND>                             {op = getToken(0).image; ((ExprNode) jjtThis).setName(op);}
+      AndExpression()       
+    )? 
+  )                                         #EXPR_OPERATOR(op != null) 
+}
+
+void EqualityExpression() :
+{
+  String op = null;
+}
+{
+  (
+    RelationalExpression()
+    ( ( <EQUALS> | <NOT_EQUALS> | <LIKE> )  {op = getToken(0).image; ((ExprNode) jjtThis).setName(op);}
+      EqualityExpression() 
+    )?  
+  )                                       #EXPR_OPERATOR(op != null)
+}
+
+void RelationalExpression() :
+{
+  String op = null;
+}
+{
+        (
+    AdditiveExpression() 
+    ( ( <GT> | <GE> | <LT> | <LE> | <SUBSETOF> )       {op = getToken(0).image; ((ExprNode) jjtThis).setName(op);}
+      RelationalExpression() 
+    )?
+  )                                       #EXPR_OPERATOR(op != null)
+}
+
+/**
+Precedence: *, /, %, +, -
+Left Associativity:*, /, %, +, -
+Right Associativity: !, =, >, >=,  <, <=
+*/
+void AdditiveExpression() :
+{}
+{
+        (
+    MultiplicativeExpression() 
+    ( ( ( <PLUS> | <MINUS> )                {((ExprNode) jjtThis).setName(getToken(0).image);}
+        MultiplicativeExpression()
+      )                                 #EXPR_OPERATOR(2)
+    )*                           
+  )                                       
+}
+
+void MultiplicativeExpression() :
+{}
+{
+  (
+    UnaryExpression() 
+    ( ( ( <MULTIPLY> | <DIVIDE> | <ZDIV> | <MOD> )  {((ExprNode) jjtThis).setName(getToken(0).image);}
+        UnaryExpression()
+      )                                 #EXPR_OPERATOR(2)
+    )*
+  )                                       
+}
+
+void UnaryExpression() :
+{
+  boolean plus = true;
+}
+{
+  (
+    ( ( ( <PLUS> | <MINUS> | <NOT> | <NOTTRUE> )             {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                       {plus = getToken(0).image.equals("+");} 
+      )?
+      ExponentExpression() 
+    ) 
+  )                                        #EXPR_OPERATOR(!plus)
+}
+
+void ExponentExpression() :
+{
+  String op = null;
+}
+{
+  ( PrimaryExpression() 
+    ( "^"                                       {op = getToken(0).image; ((ExprNode) jjtThis).setName(op);}
+      ExponentExpression() 
+    )? 
+  )                                        #EXPR_OPERATOR(op != null)
+}
+
+void PrimaryExpression() :
+{}
+{ 
+  ( LOOKAHEAD(2) CollectionExpression()
+  | Literal()
+  | "(" Expression() ")"
+  | SystemArgument()
+  | EventArgument()
+  | LOOKAHEAD(2) TemplateApplication()
+  | Reference()
+  )
+}
+
+void CollectionExpression() :
+{}
+{
+  "{" "COLLECT"   ((<DISTINCT>)  {((ExprNode) jjtThis).setName(getToken(0).image);} 
+                                   #EXPR_DISTINCT(true) )? 
+       Expression() ForAll() 
+   "}"
+}
+
+
+void Literal() :
+{}
+{
+  ( ( <INTEGER_LITERAL>   {((ExprNode) jjtThis).setNumValue(getToken(0).image);}
+                          {((ExprNode) jjtThis).setDataType(ExprNode.DATA_TYPE_INTEGER);}
+    )                                                   #EXPR_LITERAL(true) 
+  | ( <DECIMAL_LITERAL>   {((ExprNode) jjtThis).setNumValue(getToken(0).image);} 
+                          {((ExprNode) jjtThis).setDataType(ExprNode.DATA_TYPE_DECIMAL);} 
+                          /*TODO: if this is e or pi, get the val from the db and substitute */
+    )                                                   #EXPR_LITERAL(true) 
+  | ( <BOOLEAN_LITERAL>   {((ExprNode) jjtThis).setTextValue(getToken(0).image);} 
+                          {((ExprNode) jjtThis).setDataType(ExprNode.DATA_TYPE_BOOLEAN);} 
+    )                                                   #EXPR_LITERAL(true) 
+  | ( <TEXT_LITERAL>      {String val = getToken(0).image; val = val.substring(1,val.length()-1);}
+                          {((ExprNode) jjtThis).setTextValue(val);} 
+                          {((ExprNode) jjtThis).setDataType(ExprNode.DATA_TYPE_TEXT);} 
+    )                                                   #EXPR_LITERAL(true)  
+  | CollectionLiteral()              
+  )                                 
+} 
+
+void Arguments() :
+{}
+{
+  "(" [ ExpressionList() ] ")"
+}
+
+void ExpressionList() :
+{}
+{
+  ExpressionElement() ( "," ExpressionElement() )*
+}
+
+void ExpressionElement() :
+{}
+{                       /* This production is so that we can pass a template to a template */
+  ( ( <FUNC_PTR> 
+      ( TemplateIdentifier()
+      | AnyOperator()            
+      )                 {((ExprNode) jjtThis).setName(getToken(0).image);}
+    )                                           #EXPR_TEMPLATE
+  | Expression()
+  )
+}
+
+void CollectionLiteral() :
+{}
+{                                 {int elements = jjtree.nodeArity();}
+        "{" [ ExpressionList() ] "}"    {chainElements(jjtree.nodeArity() - elements);} 
+}
+
+void TemplateApplication() :
+{}
+{
+  (
+    TemplateIdentifier()                {((ExprNode) jjtThis).setName(getToken(0).image);}
+                                        {((ExprNode) jjtThis).setInfixOperatorFlag(false);}
+                                        {((ExprNode) jjtn001).setTemplateApplicationFlag(true);}
+    Arguments()                 {}
+  )                                       #EXPR_OPERATOR(true)
+}
+
+/* Identifiers */
+
+void Reference() :
+{}
+{
+        (
+    ( ModelIdentifier()   
+                  /* the first lookahead is to distinguish btween model and sys_prop, 
+                     since the only diff is the trailing parens */
+      ( LOOKAHEAD(<DOT> ModelIdentifier(), {getToken(3).kind != LPAREN}) <DOT> ModelIdentifier() )*
+      ( LOOKAHEAD(3) <DOT> SysPropIdentifier() )*
+      ( LOOKAHEAD(2) <DOT> UserPropIdentifier() )?
+    )
+  | ( ArgumentIdentifier() 
+      ( LOOKAHEAD(2) <DOT> SysPropIdentifier() )*
+      ( LOOKAHEAD(2) <DOT> UserPropIdentifier() )?
+    )
+  )                                                   
+                                  #EXPR_REFNODE(true)
+}
+
+void UserPropIdentifier() :
+{}
+{ 
+        ( <USER_PROP_IDENTIFIER> "(" <TEXT_LITERAL> 
+                                  {String img = getToken(0).image; 
+                                   ((ExprNode) jjtThis).setName(img.substring(1,img.length()-1));
+                                   ((ExprNode) jjtThis).setSourcePosition(getToken(0).offset, img.length());
+                                  } 
+                           ")" )        #EXPR_PROP(true)
+}
+
+void SysPropIdentifier() :
+{}
+{ 
+  ( <SIMPLE_IDENTIFIER> {((ExprNode) jjtThis).setName(getToken(0).image);} Arguments() ) #EXPR_SYS_PROP(true)
+}
+
+void ModelIdentifier() :
+{
+  String name = null;
+}
+{
+        (( <SIMPLE_IDENTIFIER>  {name = processEscapeChar(getToken(0).image);} 
+         | <QUOTED_IDENTIFIER>  {name = getToken(0).image; name = processEscapeChar(name.substring(1,name.length()-1));}
+   )                        {((ExprNode) jjtThis).setName(name);}
+                            {((ExprNode) jjtThis).setDataType(ExprNode.DATA_TYPE_NODE);}{} 
+  )                             #EXPR_PSNODE(true)
+}
+
+void ArgumentIdentifier() :
+{}
+{
+  <FORMAL_IDENTIFIER>  {((ExprNode) jjtThis).setArgument(getToken(0).image);} #EXPR_ARGUMENT(true)
+}
+
+void TemplateIdentifier() :
+{}
+{
+        ( <SIMPLE_IDENTIFIER> 
+        | <FORMAL_IDENTIFIER> 
+        | <QUOTED_IDENTIFIER>
+  )
+}
+
+void AnyOperator() :
+{}
+{
+  ( ConstrainingOperator()
+  | <CONTRIBUTE>
+  | <COMPATIBLE>
+  | <ADD>
+  | <SUBTRACT>
+  | <PLUS>
+  | <MINUS>
+  | <MULTIPLY>
+  | <DIVIDE>
+  | <ZDIV>
+  | <MOD>
+  | <EXP>
+  | <EQUALS>
+  | <NOT_EQUALS>
+  | <GT>
+  | <GE>
+  | <LT>
+  | <LE>
+  | <NOT>
+  | <NOTTRUE>
+  | <AND>
+  | <OR>
+  | <LIKE>
+  )
+}
